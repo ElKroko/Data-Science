@@ -30,7 +30,7 @@ print(sys.path)
 def extract_data(table):
     hook = PostgresHook(postgres_conn_id='postgres')
     
-    query = "SELECT * FROM" + table
+    query = "SELECT * FROM " + table
     connection = hook.get_conn()
     cursor = connection.cursor()
     cursor.execute(query)
@@ -46,19 +46,17 @@ def extract_data(table):
 # Funcion para entrenar el modelo y hacer las predicciones
 def _model_training_():
     train_data = extract_data("train")
-    test_data = extract_data("test")
+    
+    train_data.columns = train_data.columns.str.upper()
     # Count arrests per week for train_data
     train_arrest_count = train_data.groupby([pd.Grouper(key='ARREST_DATE', freq='W'), 'LAW_CAT_CD', 'ARREST_BORO']).size().reset_index(name='ARREST_COUNT')
 
     # Count arrests per week for test_data
-    test_arrest_count = test_data.groupby([pd.Grouper(key='ARREST_DATE', freq='W'), 'LAW_CAT_CD', 'ARREST_BORO']).size().reset_index(name='ARREST_COUNT')
     
     train_arrest_pivot = train_arrest_count.pivot(index='ARREST_DATE', columns=['LAW_CAT_CD', 'ARREST_BORO'], values='ARREST_COUNT')
-    test_arrest_pivot = test_arrest_count.pivot(index='ARREST_DATE', columns=['LAW_CAT_CD', 'ARREST_BORO'], values='ARREST_COUNT')
 
 
     train_arrest_pivot = train_arrest_pivot.fillna(0)
-    test_arrest_pivot = test_arrest_pivot.fillna(0)
     
     predict_hook = PostgresHook(postgres_conn_id='postgres')
     
@@ -66,14 +64,16 @@ def _model_training_():
     predictions_conn = predict_hook.get_conn()
     predictions_cursor = predictions_conn.cursor()
     
-
+    best_order = (1,0,2)
+    best_seasonal_order = (2, 0, 2, 4)
+    
+    print("Making predictions...")
     
     # Iterate over each borough and law category in train_arrest_pivot
     for i, borough in enumerate(train_arrest_pivot.columns.get_level_values('ARREST_BORO').unique()):
         for j, law_cat_cd in enumerate(train_arrest_pivot.columns.get_level_values('LAW_CAT_CD').unique()):
             # Prepare the data for the specific borough and law category
             data = train_arrest_pivot.xs((law_cat_cd, borough), level=('LAW_CAT_CD', 'ARREST_BORO'), axis=1)
-            test = test_arrest_pivot.xs((law_cat_cd, borough), level=('LAW_CAT_CD', 'ARREST_BORO'), axis=1)
             
             # Fit the SARIMA model with the best order and seasonal order to the data
             model = sm.tsa.SARIMAX(data, order=best_order, seasonal_order=best_seasonal_order)
@@ -81,6 +81,9 @@ def _model_training_():
             
             # Make predictions using index positions
             predictions = model_fit.predict(start="2020-01-06", end="2021-01-05")
+            
+            ## print("Predictions for", law_cat_cd, "in", borough, "are:", predictions)
+            print("Saving predictions for", law_cat_cd, "in", borough, "to the database...")
             
             # Save the predictions to the PostgreSQL table
             for idx, prediction in enumerate(predictions):
@@ -107,14 +110,15 @@ with DAG('MODEL_TRAINING', start_date = datetime(2023, 1, 1),
          schedule = '@daily', catchup = False) as dag:
     
     create_table = PostgresOperator(
-        task_id='create_table',
+        task_id='create_predictions_table',
         postgres_conn_id = 'postgres',
         sql = '''
             CREATE TABLE IF NOT EXISTS predictions (
-                ARREST_DATE TIMESTAMP PRIMARY KEY,
+                ID SERIAL PRIMARY KEY,
+                ARREST_DATE TIMESTAMP,
                 LAW_CAT_CD VARCHAR,
                 ARREST_BORO VARCHAR,
-                MODEL_PREDICTIONS INT,
+                MODEL_PREDICTIONS INT
             );
         '''
     )
