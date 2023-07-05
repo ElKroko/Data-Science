@@ -1,0 +1,6 @@
+conn_id: postgres
+
+host: postgres
+user: airflow
+password: airflow
+port: 5432
