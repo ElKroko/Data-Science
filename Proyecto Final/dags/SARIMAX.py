@@ -25,7 +25,6 @@ from pandas import json_normalize
 # a mayor funcionalidad al momento de trabajar con postgres en este caso
 
 
-
 def _store_data_():
     hook = PostgresHook(postgres_conn_id = 'postgres')
     hook.copy_expert(
@@ -54,8 +53,36 @@ def _process_data_():
 
 
 def _model_training_():
-    train = pd.read_csv('/tmp/Data/NYPD_ARRESTS_DATA_2019.csv')
-    test = pd.read_csv('/tmp/Data/NYPD_ARRESTS_DATA_2019.csv')
+    train_data = pd.read_csv('/tmp/Data/NYPD_ARRESTS_DATA_2019.csv')
+    test_Data = pd.read_csv('/tmp/Data/NYPD_ARRESTS_DATA_2019.csv')
+    # Count arrests per week for train_data
+    train_arrest_count = train_data.groupby([pd.Grouper(key='ARREST_DATE', freq='W'), 'LAW_CAT_CD', 'ARREST_BORO']).size().reset_index(name='ARREST_COUNT')
+
+    # Count arrests per week for test_data
+    test_arrest_count = test_data.groupby([pd.Grouper(key='ARREST_DATE', freq='W'), 'LAW_CAT_CD', 'ARREST_BORO']).size().reset_index(name='ARREST_COUNT')
+    
+    train_arrest_pivot = train_arrest_count.pivot(index='ARREST_DATE', columns=['LAW_CAT_CD', 'ARREST_BORO'], values='ARREST_COUNT')
+    test_arrest_pivot = test_arrest_count.pivot(index='ARREST_DATE', columns=['LAW_CAT_CD', 'ARREST_BORO'], values='ARREST_COUNT')
+
+
+    train_arrest_pivot = train_arrest_pivot.fillna(0)
+    test_arrest_pivot = test_arrest_pivot.fillna(0)
+    
+    # Iterate over each borough and law category in train_arrest_pivot
+    for i, borough in enumerate(train_arrest_pivot.columns.get_level_values('ARREST_BORO').unique()):
+        for j, law_cat_cd in enumerate(train_arrest_pivot.columns.get_level_values('LAW_CAT_CD').unique()):
+            # Prepare the data for the specific borough and law category
+            data = train_arrest_pivot.xs((law_cat_cd, borough), level=('LAW_CAT_CD', 'ARREST_BORO'), axis=1)
+            test = test_arrest_pivot.xs((law_cat_cd, borough), level=('LAW_CAT_CD', 'ARREST_BORO'), axis=1)
+            
+            # Fit the SARIMA model with the best order and seasonal order to the data
+            model = sm.tsa.SARIMAX(data, order=best_order, seasonal_order=best_seasonal_order)
+            model_fit = model.fit()
+            
+            # Make predictions using index positions
+            predictions = model_fit.predict(start="2020-01-06", end="2021-01-05")
+    
+    
 
     
 with DAG('SARIMAX', start_date = datetime(2023, 1, 1),
@@ -65,7 +92,7 @@ with DAG('SARIMAX', start_date = datetime(2023, 1, 1),
         task_id='create_table',
         postgres_conn_id = 'postgres',
         sql = '''
-            CREATE TABLE arrests (
+            CREATE TABLE IF NOT EXISTS arrests (
                 ARREST_KEY SERIAL PRIMARY KEY,
                 ARREST_DATE TIMESTAMP,
                 PD_CD FLOAT,
