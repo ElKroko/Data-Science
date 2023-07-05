@@ -28,12 +28,12 @@ from pandas import json_normalize
 def _store_data_():
     hook = PostgresHook(postgres_conn_id = 'postgres')
     hook.copy_expert(
-        sql = "COPY arrests FROM stdin WITH DELIMITER as ','",
+        sql = "COPY arrests FROM stdin WITH (FORMAT CSV, HEADER true, DELIMITER ',')",
         filename = "/tmp/Data/NYPD_Arrests_Data__Historic_.csv"
     )
 
 def _process_data_():
-    df = pd.read_csv('/tmp/Data/NYPD_Arrests_Data__Historic_.csv')
+    df = pd.read_csv('/tmp/Data/NYPD_Arrests_Data__Historic_.csv', skiprows=1)
     df["ARREST_DATE"] = pd.to_datetime(df["ARREST_DATE"])
     df_2019 = df[((df["ARREST_DATE"].dt.year > 2007) & (df["ARREST_DATE"].dt.year <= 2019))]
     df_2020 = df[df["ARREST_DATE"].dt.year == 2020]
@@ -54,7 +54,7 @@ def _process_data_():
 
 def _model_training_():
     train_data = pd.read_csv('/tmp/Data/NYPD_ARRESTS_DATA_2019.csv')
-    test_Data = pd.read_csv('/tmp/Data/NYPD_ARRESTS_DATA_2019.csv')
+    test_data = pd.read_csv('/tmp/Data/NYPD_ARRESTS_DATA_2019.csv')
     # Count arrests per week for train_data
     train_arrest_count = train_data.groupby([pd.Grouper(key='ARREST_DATE', freq='W'), 'LAW_CAT_CD', 'ARREST_BORO']).size().reset_index(name='ARREST_COUNT')
 
